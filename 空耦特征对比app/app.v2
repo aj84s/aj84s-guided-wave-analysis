@@ -1,0 +1,578 @@
+classdef GuidedWavePDIApp < matlab.apps.AppBase
+
+properties (Access = public)
+
+UIFigure matlab.ui.Figure
+
+Path1Field matlab.ui.control.EditField
+Path2Field matlab.ui.control.EditField
+Browse1 matlab.ui.control.Button
+Browse2 matlab.ui.control.Button
+
+ExtractButton matlab.ui.control.Button
+CompareButton matlab.ui.control.Button
+WeightButton matlab.ui.control.Button
+ImageButton matlab.ui.control.Button
+
+TimeWindow matlab.ui.control.NumericEditField
+SigmaFeature matlab.ui.control.NumericEditField
+Step matlab.ui.control.NumericEditField
+Delta matlab.ui.control.NumericEditField
+SigmaImage matlab.ui.control.NumericEditField
+N matlab.ui.control.NumericEditField
+
+Ax1 matlab.ui.control.UIAxes
+Ax2 matlab.ui.control.UIAxes
+Ax3 matlab.ui.control.UIAxes
+Ax4 matlab.ui.control.UIAxes
+Ax5 matlab.ui.control.UIAxes
+Ax6 matlab.ui.control.UIAxes
+Ax7 matlab.ui.control.UIAxes
+Ax8 matlab.ui.control.UIAxes
+
+peak1
+peak2
+entropy1
+entropy2
+peak_multi1
+peak_multi2
+entropy_multi1
+entropy_multi2
+entropy_weighted_1
+entropy_weighted_2
+
+time_windows
+
+end
+
+
+methods (Access = private)
+
+%% 浏览路径
+function browsePath1(app)
+    p = uigetdir;
+    if p~=0
+        app.Path1Field.Value=p;
+    end
+end
+
+function browsePath2(app)
+    p = uigetdir;
+    if p~=0
+        app.Path2Field.Value=p;
+    end
+end
+
+
+%% 提取特征
+function extractFeature(app)
+    app.ExtractButton.Enable='off';
+    
+    d=uiprogressdlg(app.UIFigure,'Title','特征提取','Message','读取方向1','Cancelable','off');
+    
+    sigma=app.SigmaFeature.Value;
+    cut_time=app.TimeWindow.Value;
+    
+    [path1_peak,path1_entropy]=readFolder(app,app.Path1Field.Value,sigma,cut_time);
+    
+    d.Value=0.5;
+    d.Message='读取方向2';
+    
+    [path2_peak,path2_entropy]=readFolder(app,app.Path2Field.Value,sigma,cut_time);
+    
+    app.peak1=path1_peak;
+    app.entropy1=path1_entropy;
+    
+    app.peak2=path2_peak;
+    app.entropy2=path2_entropy;
+    
+    % Ax1: 方向1幅值
+    plot(app.Ax1,path1_peak,'LineWidth',1.5,'Color',[0 0 0])
+    title(app.Ax1,'方向1幅值','FontSize',11,'FontWeight','bold')
+    set(app.Ax1,'FontSize',10,'YLim',[0 100],'GridLineStyle','--','GridAlpha',0.3)
+    ylabel(app.Ax1,'Normalized Value (%)')
+    xlabel(app.Ax1,'Index')
+    grid(app.Ax1,'on')
+    
+    % Ax3: 方向2幅值
+    plot(app.Ax3,path2_peak,'LineWidth',1.5,'Color',[0 0 0])
+    title(app.Ax3,'方向2幅值','FontSize',11,'FontWeight','bold')
+    set(app.Ax3,'FontSize',10,'YLim',[0 100],'GridLineStyle','--','GridAlpha',0.3)
+    ylabel(app.Ax3,'Normalized Value (%)')
+    xlabel(app.Ax3,'Index')
+    grid(app.Ax3,'on')
+    
+    % Ax2: 方向1熵值
+    plot(app.Ax2,path1_entropy,'LineWidth',1.5,'Color',[0 0 0])
+    title(app.Ax2,'方向1熵值','FontSize',11,'FontWeight','bold')
+    set(app.Ax2,'FontSize',10,'YLim',[0 100],'GridLineStyle','--','GridAlpha',0.3)
+    ylabel(app.Ax2,'Normalized Value (%)')
+    xlabel(app.Ax2,'Index')
+    grid(app.Ax2,'on')
+    
+    % Ax4: 方向2熵值
+    plot(app.Ax4,path2_entropy,'LineWidth',1.5,'Color',[0 0 0])
+    title(app.Ax4,'方向2熵值','FontSize',11,'FontWeight','bold')
+    set(app.Ax4,'FontSize',10,'YLim',[0 100],'GridLineStyle','--','GridAlpha',0.3)
+    ylabel(app.Ax4,'Normalized Value (%)')
+    xlabel(app.Ax4,'Index')
+    grid(app.Ax4,'on')
+    
+    d.Value=1;
+    pause(0.2)
+    close(d)
+    
+    app.ExtractButton.Enable='on';
+end
+
+
+%% 快速对比多时间窗
+function quickCompareWindows(app)
+    app.ExtractButton.Enable='off';
+    app.CompareButton.Enable='off';
+    app.WeightButton.Enable='off';
+    app.ImageButton.Enable='off';
+    
+    app.time_windows = 305:1:310;
+    n_windows = length(app.time_windows);
+    
+    d = uiprogressdlg(app.UIFigure,'Title','多窗口对比分析',...
+        'Message','初始化','Cancelable','off');
+    
+    sigma=app.SigmaFeature.Value;
+    
+    d.Message='提取方向1多窗口数据';
+    d.Value=0.2;
+    drawnow;
+    
+    [app.peak_multi1, app.entropy_multi1] = readFolder_MultiWindow(app, ...
+        app.Path1Field.Value, sigma, app.time_windows);
+    
+    d.Message='提取方向2多窗口数据';
+    d.Value=0.4;
+    drawnow;
+    
+    [app.peak_multi2, app.entropy_multi2] = readFolder_MultiWindow(app, ...
+        app.Path2Field.Value, sigma, app.time_windows);
+    
+    d.Value = 1;
+    pause(0.2)
+    close(d)
+    
+    app.ExtractButton.Enable='on';
+    app.CompareButton.Enable='on';
+    app.WeightButton.Enable='on';
+    app.ImageButton.Enable='on';
+    
+    msgbox(sprintf('对比完成！已提取%d个时间窗的数据\n时间窗', ...
+        n_windows),'完成');
+end
+
+
+%% 幅值加权 - 同时处理方向1和方向2
+function applyWeighting(app)
+    if isempty(app.entropy_multi1)
+        msgbox('请先点击"快速对比"提取多窗口数据！','提示');
+        return;
+    end
+    
+    app.WeightButton.Enable='off';
+    
+    d = uiprogressdlg(app.UIFigure,'Title','幅值加权处理',...
+        'Message','计算相关性','Cancelable','off');
+    
+    n_windows = length(app.time_windows);
+    
+    %% 方向1加权
+    d.Message='计算方向1相关性';
+    d.Value=0.25;
+    drawnow;
+    
+    [entropy_weighted_1, corr_score_1, weight_1] = weightEntropyByAmplitude(app, ...
+        app.peak_multi1, app.entropy_multi1);
+    
+    %% 方向2加权
+    d.Message='计算方向2相关性';
+    d.Value=0.5;
+    drawnow;
+    
+    [entropy_weighted_2, corr_score_2, weight_2] = weightEntropyByAmplitude(app, ...
+        app.peak_multi2, app.entropy_multi2);
+    
+    % 保存加权结果
+    app.entropy_weighted_1 = entropy_weighted_1;
+    app.entropy_weighted_2 = entropy_weighted_2;
+    
+    %% 显示加权后的结果
+    d.Message='显示结果';
+    d.Value=0.75;
+    drawnow;
+    
+    % Ax7: 方向1加权
+    cla(app.Ax7)
+    plot(app.Ax7, entropy_weighted_1, 'LineWidth', 2, 'Color', [1 0 0])
+    title(app.Ax7, '方向1加权熵值', 'FontSize', 11, 'FontWeight', 'bold')
+    set(app.Ax7, 'FontSize', 10, 'YLim', [0 100], 'GridLineStyle', '--', 'GridAlpha', 0.3)
+    ylabel(app.Ax7, 'Normalized Value (%)')
+    xlabel(app.Ax7, 'Index')
+    grid(app.Ax7, 'on')
+    
+    % Ax8: 方向2加权
+    cla(app.Ax8)
+    plot(app.Ax8, entropy_weighted_2, 'LineWidth', 2, 'Color', [0 0.5 1])
+    title(app.Ax8, '方向2加权熵值', 'FontSize', 11, 'FontWeight', 'bold')
+    set(app.Ax8, 'FontSize', 10, 'YLim', [0 100], 'GridLineStyle', '--', 'GridAlpha', 0.3)
+    ylabel(app.Ax8, 'Normalized Value (%)')
+    xlabel(app.Ax8, 'Index')
+    grid(app.Ax8, 'on')
+    
+    d.Value=1;
+    pause(0.2)
+    close(d)
+    
+    %% 打印权重信息到命令窗口
+    fprintf('\n========== 幅值加权结果 ==========\n');
+    fprintf('方向1相关性和权重:\n');
+    for w = 1:n_windows
+        fprintf('  Window %.1f μs: |correlation| = %.4f, weight = %.4f\n', ...
+            app.time_windows(w), corr_score_1(w), weight_1(w));
+    end
+    
+    fprintf('\n方向2相关性和权重:\n');
+    for w = 1:n_windows
+        fprintf('  Window %.1f μs: |correlation| = %.4f, weight = %.4f\n', ...
+            app.time_windows(w), corr_score_2(w), weight_2(w));
+    end
+    fprintf('==================================\n\n');
+    
+    msgbox('幅值加权完成！现在可以点击"开始成像"查看加权后的PDI成像结果。','完成');
+    
+    app.WeightButton.Enable='on';
+end
+
+
+%% 幅值加权核心算法
+function [entropy_weighted, corr_score, weight] = weightEntropyByAmplitude(app, peak_multi, entropy_multi)
+    [n_points, n_windows] = size(entropy_multi);
+    corr_score = zeros(1, n_windows);
+    
+    for w = 1:n_windows
+        [corr_xy, ~] = xcorr(peak_multi(:,w), entropy_multi(:,w), 'normalized');
+        corr_score(w) = max(abs(corr_xy));
+    end
+    
+    weight = corr_score / sum(corr_score);
+    
+    entropy_weighted = zeros(n_points, 1);
+    for k = 1:n_points
+        for w = 1:n_windows
+            entropy_weighted(k) = entropy_weighted(k) + weight(w) * entropy_multi(k, w);
+        end
+    end
+    
+    entropy_weighted = (entropy_weighted - min(entropy_weighted)) / ...
+                       (max(entropy_weighted) - min(entropy_weighted) + eps) * 100;
+end
+
+
+%% 成像 - 使用加权后的数据，两方向融合
+function runImaging(app)
+    if isempty(app.entropy_weighted_1)
+        msgbox('请先点击"幅值加权"进行加权处理！','提示');
+        return;
+    end
+    
+    app.ImageButton.Enable='off';
+    
+    d=uiprogressdlg(app.UIFigure,'Title','PDI成像','Message','计算幅值PDI','Cancelable','off');
+    
+    step=app.Step.Value;
+    Delta=app.Delta.Value;
+    sigma=app.SigmaImage.Value;
+    N=app.N.Value;
+    
+    num=length(app.peak1);
+    range=num*step;
+    
+    ray_list=buildRays(app,num,step);
+    
+    peak=[app.peak1 app.peak2];
+    entropy=[app.entropy_weighted_1' app.entropy_weighted_2'];
+    
+    cla(app.Ax5)
+    cla(app.Ax6)
+    
+    img1=PDI(app,ray_list,peak,range,N,Delta,sigma);
+    
+    d.Value=0.5;
+    d.Message='计算加权熵值PDI（两方向融合）';
+    
+    img2=PDI(app,ray_list,entropy,range,N,Delta,sigma);
+    
+    imagesc(app.Ax5,[0 range],[0 range],img1)
+    axis(app.Ax5,'equal')
+    title(app.Ax5,'幅值PDI','FontSize',11,'FontWeight','bold')
+    colormap(app.Ax5,'jet')
+    colorbar(app.Ax5)
+    set(app.Ax5,'FontSize',10)
+    
+    imagesc(app.Ax6,[0 range],[0 range],img2)
+    axis(app.Ax6,'equal')
+    title(app.Ax6,'加权熵值PDI（两方向融合）','FontSize',11,'FontWeight','bold')
+    colormap(app.Ax6,'jet')
+    colorbar(app.Ax6)
+    set(app.Ax6,'FontSize',10)
+    
+    drawnow
+    
+    exportgraphics(app.Ax5,'Amplitude_PDI.tif','Resolution',600)
+    exportgraphics(app.Ax6,'Entropy_Weighted_PDI_Fused.tif','Resolution',600)
+    
+    d.Value=1;
+    pause(0.2)
+    close(d)
+    
+    app.ImageButton.Enable='on';
+end
+
+
+%% 多窗口特征提取
+function [peak_multi, entropy_multi] = readFolder_MultiWindow(app, folder, sigma, time_windows)
+    files = dir(fullfile(folder,'*.csv'));
+    names = {files.name};
+    nums = zeros(length(names),1);
+    
+    for i=1:length(names)
+        t = regexp(names{i},'\d+','match');
+        nums(i) = str2double(t{end});
+    end
+    
+    [~,idx] = sort(nums);
+    files = files(idx);
+    
+    n = length(files);
+    n_windows = length(time_windows);
+    
+    peak_multi = zeros(n, n_windows);
+    entropy_multi = zeros(n, n_windows);
+    
+    for i = 1:n
+        data = readmatrix(fullfile(folder, files(i).name));
+        data = data(:,1);
+        
+        bit_time = 0.5;
+        time = 0:bit_time:bit_time*(length(data)-1);
+        
+        for w = 1:n_windows
+            cut_time = time_windows(w);
+            idx_time = time <= cut_time;
+            signal = data(idx_time);
+            
+            env = abs(hilbert(signal));
+            peak_multi(i,w) = max(env);
+            entropy_multi(i,w) = wp_energy_entropy(app, signal);
+        end
+    end
+    
+    for w = 1:n_windows
+        peak_multi(:,w) = imgaussfilt(peak_multi(:,w), sigma);
+        entropy_multi(:,w) = imgaussfilt(entropy_multi(:,w), sigma);
+    end
+    
+    for w = 1:n_windows
+        peak_multi(:,w) = (peak_multi(:,w) - min(peak_multi(:,w))) / ...
+                          (max(peak_multi(:,w)) - min(peak_multi(:,w)) + eps) * 100;
+        entropy_multi(:,w) = (entropy_multi(:,w) - min(entropy_multi(:,w))) / ...
+                             (max(entropy_multi(:,w)) - min(entropy_multi(:,w)) + eps) * 100;
+    end
+end
+
+
+%% 构建射线
+function ray_list=buildRays(app,num,step)
+    range=num*step;
+    
+    y=(0:num-1)*step;
+    x=(0:num-1)*step;
+    
+    ray_list=[];
+    
+    for i=1:num
+        ray_list=[ray_list;0 y(i) range y(i)];
+    end
+    
+    for i=1:num
+        ray_list=[ray_list;x(i) 0 x(i) range];
+    end
+end
+
+
+%% PDI算法
+function recon=PDI(app,ray_list,p,range,N,Delta,sigma)
+    [xg,yg]=meshgrid(linspace(0,range,N));
+    
+    img_num=zeros(N);
+    img_den=zeros(N);
+    
+    for k=1:length(p)
+        x1=ray_list(k,1);
+        y1=ray_list(k,2);
+        x2=ray_list(k,3);
+        y2=ray_list(k,4);
+        
+        c=hypot(x1-x2,y1-y2)/2;
+        a=c+Delta/2;
+        
+        d1=hypot(xg-x1,yg-y1);
+        d2=hypot(xg-x2,yg-y2);
+        
+        d=d1+d2;
+        
+        w=exp(-(d-2*a).^2/(2*sigma^2));
+        
+        img_num=img_num+p(k)*w;
+        img_den=img_den+w;
+    end
+    
+    recon=img_num./(img_den+eps);
+end
+
+
+%% 读取CSV
+function [peak,entropy]=readFolder(app,folder,sigma,cut_time)
+    files=dir(fullfile(folder,'*.csv'));
+    
+    names={files.name};
+    nums=zeros(length(names),1);
+    
+    for i=1:length(names)
+        t=regexp(names{i},'\d+','match');
+        nums(i)=str2double(t{end});
+    end
+    
+    [~,idx]=sort(nums);
+    files=files(idx);
+    
+    n=length(files);
+    
+    peak=zeros(1,n);
+    entropy=zeros(1,n);
+    
+    for i=1:n
+        data=readmatrix(fullfile(folder,files(i).name));
+        data=data(:,1);
+        
+        bit_time=0.5;
+        time=0:bit_time:bit_time*(length(data)-1);
+        
+        idx=time<=cut_time;
+        signal=data(idx);
+        
+        env=abs(hilbert(signal));
+        peak(i)=max(env);
+        entropy(i)=wp_energy_entropy(app,signal);
+    end
+    
+    peak=imgaussfilt(peak,sigma);
+    entropy=imgaussfilt(entropy,sigma);
+    
+    peak=(peak-min(peak))/(max(peak)-min(peak)+eps)*100;
+    entropy=(entropy-min(entropy))/(max(entropy)-min(entropy)+eps)*100;
+end
+
+
+%% 小波包熵
+function Hs=wp_energy_entropy(app,signal)
+    level=3;
+    wname='db10';
+    
+    T=wpdec(signal,level,wname);
+    nodes=leaves(T);
+    
+    energy=zeros(length(nodes),1);
+    
+    for i=1:length(nodes)
+        c=wpcoef(T,nodes(i));
+        energy(i)=sum(c.^2);
+    end
+    
+    p=energy/sum(energy);
+    p=p+1e-12;
+    Hs=-sum(p.*log(p));
+end
+
+
+%% UI
+function createComponents(app)
+    app.UIFigure=uifigure('Position',[100 100 1400 950],'Name','导波PDI成像 - 幅值加权');
+    
+    uilabel(app.UIFigure,'Text','路径1','Position',[20 910 40 22]);
+    app.Path1Field=uieditfield(app.UIFigure,'text','Position',[70 910 180 22]);
+    app.Browse1=uibutton(app.UIFigure,'push','Text','浏览',...
+        'Position',[260 910 50 22],...
+        'ButtonPushedFcn',@(btn,event)browsePath1(app));
+    
+    uilabel(app.UIFigure,'Text','路径2','Position',[20 880 40 22]);
+    app.Path2Field=uieditfield(app.UIFigure,'text','Position',[70 880 180 22]);
+    app.Browse2=uibutton(app.UIFigure,'push','Text','浏览',...
+        'Position',[260 880 50 22],...
+        'ButtonPushedFcn',@(btn,event)browsePath2(app));
+    
+    uilabel(app.UIFigure,'Text','时间窗','Position',[20 830 50 22]);
+    app.TimeWindow=uieditfield(app.UIFigure,'numeric','Value',350,'Position',[80 830 80 22]);
+    
+    uilabel(app.UIFigure,'Text','平滑σ','Position',[20 790 50 22]);
+    app.SigmaFeature=uieditfield(app.UIFigure,'numeric','Value',1,'Position',[80 790 80 22]);
+    
+    uilabel(app.UIFigure,'Text','步距','Position',[20 750 50 22]);
+    app.Step=uieditfield(app.UIFigure,'numeric','Value',1,'Position',[80 750 80 22]);
+    
+    uilabel(app.UIFigure,'Text','椭圆Δ','Position',[20 710 50 22]);
+    app.Delta=uieditfield(app.UIFigure,'numeric','Value',0.01,'Position',[80 710 80 22]);
+    
+    uilabel(app.UIFigure,'Text','权重σ','Position',[20 670 50 22]);
+    app.SigmaImage=uieditfield(app.UIFigure,'numeric','Value',0.2,'Position',[80 670 80 22]);
+    
+    uilabel(app.UIFigure,'Text','分辨率','Position',[20 630 50 22]);
+    app.N=uieditfield(app.UIFigure,'numeric','Value',400,'Position',[80 630 80 22]);
+    
+    app.ExtractButton=uibutton(app.UIFigure,'push','Text','提取特征',...
+        'Position',[20 570 140 30],...
+        'ButtonPushedFcn',@(btn,event)extractFeature(app));
+    
+    app.CompareButton=uibutton(app.UIFigure,'push','Text','快速对比',...
+        'Position',[20 530 140 30],...
+        'ButtonPushedFcn',@(btn,event)quickCompareWindows(app));
+    
+    app.WeightButton=uibutton(app.UIFigure,'push','Text','幅值加权',...
+        'Position',[20 490 140 30],...
+        'ButtonPushedFcn',@(btn,event)applyWeighting(app));
+    
+    app.ImageButton=uibutton(app.UIFigure,'push','Text','开始成像',...
+        'Position',[20 450 140 30],...
+        'ButtonPushedFcn',@(btn,event)runImaging(app));
+    
+    app.Ax1=uiaxes(app.UIFigure,'Position',[330 740 320 160]);
+    app.Ax2=uiaxes(app.UIFigure,'Position',[690 740 320 160]);
+    app.Ax7=uiaxes(app.UIFigure,'Position',[1050 740 320 160]);
+    
+    app.Ax3=uiaxes(app.UIFigure,'Position',[330 540 320 160]);
+    app.Ax4=uiaxes(app.UIFigure,'Position',[690 540 320 160]);
+    app.Ax8=uiaxes(app.UIFigure,'Position',[1050 540 320 160]);
+    
+    app.Ax5=uiaxes(app.UIFigure,'Position',[330 230 320 270]);
+    app.Ax6=uiaxes(app.UIFigure,'Position',[690 230 320 270]);
+end
+
+end
+
+
+methods (Access = public)
+
+function app=GuidedWavePDIApp
+    createComponents(app)
+end
+
+end
+
+end
